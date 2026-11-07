@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -26,7 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    HistoryService().clear();
+    unawaited(HistoryService().clear());
     FloatingDetectorService.listenForScan(_scanCurrentScreen);
   }
 
