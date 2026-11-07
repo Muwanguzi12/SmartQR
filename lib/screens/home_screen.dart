@@ -28,7 +28,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     unawaited(HistoryService().clear());
-    FloatingDetectorService.listenForScan(_scanCurrentScreen);
+    FloatingDetectorService.listenForScan(_handleCapturedScreen);
   }
 
   Future<void> _showResult(String value) async {
@@ -59,6 +59,20 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (error) {
       if (mounted) _message(error.toString().replaceFirst('PlatformException(', ''));
     } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _handleCapturedScreen(String path) async {
+    if (!mounted || _busy) {
+      try { await File(path).delete(); } catch (_) {}
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await _decodeImage(path);
+    } finally {
+      try { await File(path).delete(); } catch (_) {}
       if (mounted) setState(() => _busy = false);
     }
   }
