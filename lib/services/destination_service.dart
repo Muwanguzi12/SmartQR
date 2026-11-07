@@ -19,36 +19,62 @@ class DestinationService {
     final value = raw.trim();
     final lower = value.toLowerCase();
 
-    if (lower.startsWith('https://') || lower.startsWith('http://')) {
-      final uri = Uri.tryParse(value);
-      final host = uri?.host.toLowerCase() ?? '';
-      if (host.contains('wa.me') || host.contains('whatsapp.com')) {
-        return DestinationInfo(title: 'WhatsApp', subtitle: 'Open this WhatsApp link', kind: 'WhatsApp link', value: value, isWeb: true);
+    if (lower.startsWith('wifi:')) {
+      final fields = <String, String>{};
+      for (final part in value.substring(5).split(';')) {
+        final separator = part.indexOf(':');
+        if (separator > 0) {
+          fields[part.substring(0, separator).toUpperCase()] =
+              part.substring(separator + 1);
+        }
       }
-      if (host.contains('youtube.com') || host == 'youtu.be') {
-        return DestinationInfo(title: 'YouTube', subtitle: 'Open this video or channel', kind: 'Video link', value: value, isWeb: true);
-      }
-      if (host.contains('tiktok.com')) {
-        return DestinationInfo(title: 'TikTok', subtitle: 'Open this TikTok link', kind: 'Social link', value: value, isWeb: true);
-      }
-      if (host.contains('instagram.com')) {
-        return DestinationInfo(title: 'Instagram', subtitle: 'Open this Instagram link', kind: 'Social link', value: value, isWeb: true);
-      }
-      if (host.contains('google.com') || host.contains('goo.gl')) {
-        return DestinationInfo(title: 'Google', subtitle: 'Open this Google link', kind: 'Web link', value: value, isWeb: true);
-      }
-      if (host.contains('chatgpt.com') || host.contains('openai.com')) {
-        return DestinationInfo(title: 'ChatGPT', subtitle: 'Open this ChatGPT link', kind: 'AI link', value: value, isWeb: true);
-      }
-      return DestinationInfo(title: host.isEmpty ? 'Website' : host, subtitle: 'Review the website before opening', kind: 'Web link', value: value, isWeb: true);
+      final ssid = fields['S'] ?? 'Unknown network';
+      return DestinationInfo(
+        title: ssid,
+        subtitle: fields['H'] == 'true'
+            ? 'Hidden Wi-Fi network'
+            : 'Wi-Fi network · ${fields['T'] ?? 'secured'}',
+        kind: 'Wi-Fi',
+        value: value,
+      );
     }
 
-    if (lower.startsWith('tel:')) return DestinationInfo(title: 'Phone number', subtitle: value.substring(4), kind: 'Phone', value: value);
-    if (lower.startsWith('mailto:')) return DestinationInfo(title: 'Email', subtitle: value.substring(7), kind: 'Email', value: value);
-    if (lower.startsWith('wifi:')) return DestinationInfo(title: 'Wi-Fi network', subtitle: 'Wi-Fi connection details', kind: 'Wi-Fi', value: value);
-    if (lower.startsWith('upi:') || lower.startsWith('pay:') || lower.contains('payment')) {
-      return DestinationInfo(title: 'Payment information', subtitle: 'Check the payment details carefully', kind: 'Payment', value: value);
+    if (lower.startsWith('tel:')) {
+      return DestinationInfo(title: 'Phone number', subtitle: value.substring(4),
+          kind: 'Phone', value: value);
     }
-    return DestinationInfo(title: 'Scanned content', subtitle: value, kind: 'Text / code', value: value);
+    if (lower.startsWith('mailto:')) {
+      return DestinationInfo(title: 'Email', subtitle: value.substring(7),
+          kind: 'Email', value: value);
+    }
+    if (lower.startsWith('smsto:') || lower.startsWith('sms:')) {
+      return DestinationInfo(title: 'Text message', subtitle: value,
+          kind: 'SMS', value: value);
+    }
+    if (lower.startsWith('geo:')) {
+      return DestinationInfo(title: 'Map location', subtitle: value.substring(4),
+          kind: 'Location', value: value);
+    }
+    if (lower.startsWith('begin:vcard') || lower.startsWith('mecard:')) {
+      return DestinationInfo(title: 'Contact card', subtitle: 'Contact details are ready to review',
+          kind: 'Contact', value: value);
+    }
+    if (lower.startsWith('http://') || lower.startsWith('https://')) {
+      final uri = Uri.tryParse(value);
+      final host = uri?.host.toLowerCase() ?? '';
+      return DestinationInfo(
+        title: host.isEmpty ? 'Website' : host,
+        subtitle: 'Review the destination before opening',
+        kind: 'Website',
+        value: value,
+        isWeb: true,
+      );
+    }
+    if (lower.startsWith('www.')) {
+      return DestinationInfo(title: 'Website', subtitle: 'Review the destination before opening',
+          kind: 'Website', value: 'https://$value', isWeb: true);
+    }
+    return DestinationInfo(title: 'Scanned content', subtitle: 'Text detected',
+        kind: 'Text', value: value);
   }
 }
