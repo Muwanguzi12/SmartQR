@@ -31,7 +31,7 @@ class _HomeScreenState extends State<HomeScreen> {
     FloatingDetectorService.listenForScan(_scanCurrentScreen);
   }
 
-  Future<void> _showResult(String value, {String type = 'QR / barcode'}) async {
+  Future<void> _showResult(String value) async {
     if (!mounted || value.trim().isEmpty) return;
     final info = DestinationService.classify(value.trim());
     showModalBottomSheet<void>(
