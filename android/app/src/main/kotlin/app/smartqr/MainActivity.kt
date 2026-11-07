@@ -129,7 +129,7 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
-        handleFloatingIntent(intent)
+        handleCapturedScreenIntent(intent)
     }
 
     private fun handleCapturedScreenIntent(intent: Intent?) {
