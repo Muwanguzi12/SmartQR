@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/services.dart';
 
 class FloatingDetectorService {
@@ -11,6 +12,9 @@ class FloatingDetectorService {
         await _onScan?.call();
       }
     });
+    unawaited(_channel.invokeMethod<bool>('consumePendingFloatingScan').then((pending) async {
+      if (pending == true) await _onScan?.call();
+    }).catchError((_) {}));
   }
 
   static void stopListening() {
