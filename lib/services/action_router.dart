@@ -98,7 +98,7 @@ class ActionRouter {
   static Future<void> _contact(BuildContext context, String payload) async {
     final fields = <String, String>{};
     if (payload.toUpperCase().startsWith('BEGIN:VCARD')) {
-      for (final line in payload.split(RegExp(r'\\r?\\n'))) {
+      for (final line in payload.split(RegExp(r'\r?\n'))) {
         final separator = line.indexOf(':');
         if (separator < 0) continue;
         final key = line.substring(0, separator).split(';').first.toUpperCase();
