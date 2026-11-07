@@ -114,7 +114,7 @@ class ActionRouter {
     }
     try {
       await _native.invokeMethod('createContact', {
-        'name': fields['FN'] ?? fields['N'] ?? fields['N'] ?? '',
+        'name': fields['FN'] ?? fields['N'] ?? '',
         'phone': fields['TEL'] ?? '',
         'email': fields['EMAIL'] ?? '',
         'company': fields['ORG'] ?? '',
