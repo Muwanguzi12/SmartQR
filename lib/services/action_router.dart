@@ -72,12 +72,17 @@ class ActionRouter {
     try {
       await _native.invokeMethod('openWifiSettings');
     } on PlatformException {
-      // Fall through to the platform settings URI below.
-      await launchUrl(Uri.parse('android.settings.WIFI_SETTINGS'),
-          mode: LaunchMode.externalApplication).catchError((_) => false);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Open Wi-Fi settings to choose this network.')),
+        );
+      }
     } on MissingPluginException {
-      await launchUrl(Uri.parse('android.settings.WIFI_SETTINGS'),
-          mode: LaunchMode.externalApplication).catchError((_) => false);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Wi-Fi settings are unavailable on this device.')),
+        );
+      }
     }
     if (context.mounted) {
       showDialog<void>(context: context, builder: (ctx) => AlertDialog(
@@ -91,13 +96,38 @@ class ActionRouter {
   }
 
   static Future<void> _contact(BuildContext context, String payload) async {
-    await Clipboard.setData(ClipboardData(text: payload));
-    if (context.mounted) {
-      showDialog<void>(context: context, builder: (ctx) => AlertDialog(
-        title: const Text('Contact card detected'),
-        content: const Text('The contact data has been copied. Review it before importing it into your contacts.'),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
-      ));
+    final fields = <String, String>{};
+    if (payload.toUpperCase().startsWith('BEGIN:VCARD')) {
+      for (final line in payload.split(RegExp(r'\\r?\\n'))) {
+        final separator = line.indexOf(':');
+        if (separator < 0) continue;
+        final key = line.substring(0, separator).split(';').first.toUpperCase();
+        final value = line.substring(separator + 1).trim();
+        if (value.isNotEmpty) fields.putIfAbsent(key, () => value);
+      }
+    } else {
+      final body = payload.replaceFirst(RegExp(r'^MECARD:', caseSensitive: false), '');
+      for (final part in body.split(';')) {
+        final separator = part.indexOf(':');
+        if (separator > 0) fields[part.substring(0, separator).toUpperCase()] = part.substring(separator + 1);
+      }
+    }
+    try {
+      await _native.invokeMethod('createContact', {
+        'name': fields['FN'] ?? fields['N'] ?? fields['N'] ?? '',
+        'phone': fields['TEL'] ?? '',
+        'email': fields['EMAIL'] ?? '',
+        'company': fields['ORG'] ?? '',
+      });
+    } on PlatformException {
+      await Clipboard.setData(ClipboardData(text: payload));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Contact details copied. Import them from your contacts app.')),
+        );
+      }
+    } on MissingPluginException {
+      await Clipboard.setData(ClipboardData(text: payload));
     }
   }
 }
