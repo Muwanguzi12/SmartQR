@@ -25,6 +25,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ScreenCaptureConsentActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/ScreenCaptureConsentTheme" />
+
         <service
             android:name=".ScreenCaptureForegroundService"
             android:exported="false"
