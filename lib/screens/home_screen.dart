@@ -1,9 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/barcode_service.dart';
 import '../services/action_router.dart';
 import '../services/floating_detector_service.dart';
+import '../services/history_service.dart';
 import '../services/destination_service.dart';
 import '../services/screen_capture_service.dart';
 import 'scanner_screen.dart';
@@ -24,6 +26,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    HistoryService().clear();
+    FloatingDetectorService.listenForScan(_scanCurrentScreen);
   }
 
   Future<void> _showResult(String value, {String type = 'QR / barcode'}) async {
@@ -48,7 +52,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _busy = true);
     try {
       final path = await _screenCapture.captureScreen();
-      if (path != null) await _decodeImage(path);
+      if (path != null) {
+        try { await _decodeImage(path); } finally { try { await File(path).delete(); } catch (_) {} }
+      }
     } catch (error) {
       if (mounted) _message(error.toString().replaceFirst('PlatformException(', ''));
     } finally {
@@ -84,6 +90,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    FloatingDetectorService.stopListening();
     _barcodeService.dispose();
     super.dispose();
   }
