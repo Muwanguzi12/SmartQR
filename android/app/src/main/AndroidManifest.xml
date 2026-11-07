@@ -29,6 +29,8 @@
             android:name=".ScreenCaptureConsentActivity"
             android:exported="false"
             android:excludeFromRecents="true"
+            android:taskAffinity="app.smartqr.capture"
+            android:launchMode="standard"
             android:theme="@style/ScreenCaptureConsentTheme" />
 
         <service
