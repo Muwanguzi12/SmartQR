@@ -101,9 +101,9 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: 'Scan history',
-            onPressed: () => _showHistory(),
-            icon: const Icon(Icons.history_rounded),
+            tooltip: 'Floating detector',
+            onPressed: _enableFloatingDetector,
+            icon: const Icon(Icons.picture_in_picture_alt_rounded),
           ),
         ],
       ),
@@ -167,51 +167,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showHistory() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: SizedBox(
-          height: MediaQuery.of(context).size.height * .72,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(18),
-                child: Row(
-                  children: [
-                    const Expanded(child: Text('Scan history', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
-                    TextButton(
-                      onPressed: () async {
-                        await _history.clear();
-                        await _loadHistory();
-                        if (sheetContext.mounted) Navigator.pop(sheetContext);
-                      },
-                      child: const Text('Clear'),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: _entries.isEmpty
-                    ? const Center(child: Text('No scans yet'))
-                    : ListView.builder(
-                        itemCount: _entries.length,
-                        itemBuilder: (_, index) {
-                          final entry = _entries[index];
-                          return _HistoryTile(entry: entry, onTap: () {
-                            Navigator.pop(sheetContext);
-                            _showResult(entry.value, type: entry.type);
-                          });
-                        },
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+
 }
 
 class _ActionTile extends StatelessWidget {
@@ -239,3 +195,61 @@ class _ActionTile extends StatelessWidget {
       );
 }
 
+
+class _ResultSheet extends StatelessWidget {
+  const _ResultSheet({required this.info});
+  final DestinationInfo info;
+
+  Future<void> _copy(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: info.value));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Copied to clipboard')),
+      );
+    }
+  }
+
+  Future<void> _execute(BuildContext context) async {
+    await ActionRouter.execute(context, info);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canExecute = info.kind != 'Text';
+    return Container(
+      padding: EdgeInsets.fromLTRB(22, 12, 22, MediaQuery.of(context).viewInsets.bottom + 24),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Center(child: Container(width: 42, height: 4, decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(5)))),
+          const SizedBox(height: 22),
+          Text(info.kind.toUpperCase(), style: const TextStyle(color: Color(0xFF6555E8), fontWeight: FontWeight.w800, letterSpacing: 1)),
+          const SizedBox(height: 8),
+          Text(info.title, style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          Text(info.subtitle, style: const TextStyle(color: Colors.black54)),
+          const SizedBox(height: 16),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: const Color(0xFFF5F4FA), borderRadius: BorderRadius.circular(16)),
+            child: SelectableText(info.value, style: const TextStyle(fontSize: 13, height: 1.4)),
+          ),
+          const SizedBox(height: 18),
+          Row(children: [
+            Expanded(child: OutlinedButton.icon(onPressed: () => _copy(context), icon: const Icon(Icons.copy_rounded), label: const Text('Copy'))),
+            if (canExecute) ...[
+              const SizedBox(width: 10),
+              Expanded(child: FilledButton.icon(onPressed: () => _execute(context), icon: const Icon(Icons.open_in_new_rounded), label: Text(info.kind == 'Wi-Fi' ? 'Connect' : 'Continue'))),
+            ],
+          ]),
+          const SizedBox(height: 8),
+          const Text('Review the destination before continuing. SmartQR does not run payment or external actions silently.', style: TextStyle(fontSize: 11, color: Colors.black45)),
+        ]),
+      ),
+    );
+  }
+}
