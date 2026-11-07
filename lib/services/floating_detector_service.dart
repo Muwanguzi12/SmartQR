@@ -3,22 +3,29 @@ import 'package:flutter/services.dart';
 
 class FloatingDetectorService {
   static const _channel = MethodChannel('app.smartqr/overlay');
-  static Future<void> Function()? _onScan;
+  static Future<void> Function(String path)? _onCapturedScreen;
 
-  static void listenForScan(Future<void> Function() callback) {
-    _onScan = callback;
+  static void listenForScan(Future<void> Function(String path) callback) {
+    _onCapturedScreen = callback;
     _channel.setMethodCallHandler((call) async {
-      if (call.method == 'scanCurrentScreen') {
-        await _onScan?.call();
+      if (call.method == 'screenCaptureReady') {
+        final path = call.arguments as String?;
+        if (path != null && path.isNotEmpty) {
+          await _onCapturedScreen?.call(path);
+        }
       }
     });
-    unawaited(_channel.invokeMethod<bool>('consumePendingFloatingScan').then((pending) async {
-      if (pending == true) await _onScan?.call();
+
+    // Covers the case where Android finished capturing before Flutter resumed.
+    unawaited(_channel.invokeMethod<String>('consumePendingCapturedScreen').then((path) async {
+      if (path != null && path.isNotEmpty) {
+        await _onCapturedScreen?.call(path);
+      }
     }).catchError((_) {}));
   }
 
   static void stopListening() {
-    _onScan = null;
+    _onCapturedScreen = null;
     _channel.setMethodCallHandler(null);
   }
 
