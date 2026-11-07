@@ -41,7 +41,9 @@ class ScreenCaptureForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
-        val notification = Notification.Builder(this, CHANNEL_ID)
+        val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL_ID)
+            else Notification.Builder(this)
+        val notification = builder
             .setContentTitle("SmartQR screen scan")
             .setContentText("Capturing one frame after your approval")
             .setSmallIcon(android.R.drawable.ic_menu_search)
@@ -133,7 +135,7 @@ class ScreenCaptureForegroundService : Service() {
         reader = null
         try { projection?.stop() } catch (_: Exception) {}
         projection = null
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE) else stopForeground(true)
         stopSelf()
     }
 
