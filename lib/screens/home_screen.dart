@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:image_picker/image_picker.dart';
-import '../models/scan_entry.dart';
 import '../services/barcode_service.dart';
+import '../services/action_router.dart';
+import '../services/floating_detector_service.dart';
 import '../services/destination_service.dart';
-import '../services/history_service.dart';
 import '../services/screen_capture_service.dart';
 import 'scanner_screen.dart';
 
@@ -19,29 +18,17 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _picker = ImagePicker();
   final _barcodeService = BarcodeService();
-  final _history = HistoryService();
   final _screenCapture = ScreenCaptureService();
-  List<ScanEntry> _entries = [];
   bool _busy = false;
 
   @override
   void initState() {
     super.initState();
-    _loadHistory();
-  }
-
-  Future<void> _loadHistory() async {
-    final items = await _history.load();
-    if (mounted) setState(() => _entries = items);
   }
 
   Future<void> _showResult(String value, {String type = 'QR / barcode'}) async {
     if (!mounted || value.trim().isEmpty) return;
-    final clean = value.trim();
-    await _history.add(ScanEntry(value: clean, type: type, scannedAt: DateTime.now()));
-    await _loadHistory();
-    if (!mounted) return;
-    final info = DestinationService.classify(clean);
+    final info = DestinationService.classify(value.trim());
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -84,6 +71,11 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (error) {
       if (mounted) _message('Could not read this image: $error');
     }
+  }
+
+  Future<void> _enableFloatingDetector() async {
+    final enabled = await FloatingDetectorService.enable();
+    if (mounted) _message(enabled ? 'Floating SmartQR detector is ready.' : 'Allow SmartQR to display over other apps, then try again.');
   }
 
   void _message(String text) {
@@ -168,20 +160,7 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: EdgeInsets.only(top: 14),
               child: LinearProgressIndicator(),
             ),
-            const SizedBox(height: 26),
-            Row(
-              children: [
-                const Expanded(child: Text('Recent scans', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800))),
-                TextButton(onPressed: _showHistory, child: const Text('See all')),
-              ],
-            ),
-            if (_entries.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 22),
-                child: Center(child: Text('Your recent scans will appear here.', style: TextStyle(color: Colors.black54))),
-              )
-            else
-              ..._entries.take(4).map((entry) => _HistoryTile(entry: entry, onTap: () => _showResult(entry.value, type: entry.type))),
+
           ],
         ),
       ),
@@ -260,75 +239,3 @@ class _ActionTile extends StatelessWidget {
       );
 }
 
-class _HistoryTile extends StatelessWidget {
-  const _HistoryTile({required this.entry, required this.onTap});
-  final ScanEntry entry;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => ListTile(
-        contentPadding: const EdgeInsets.symmetric(vertical: 3),
-        leading: const CircleAvatar(backgroundColor: Color(0xFFECE9FF), child: Icon(Icons.qr_code_2_rounded, color: Color(0xFF6555E8))),
-        title: Text(entry.value, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(entry.type),
-        onTap: onTap,
-      );
-}
-
-class _ResultSheet extends StatelessWidget {
-  const _ResultSheet({required this.info});
-  final DestinationInfo info;
-
-  Future<void> _copy(BuildContext context) async {
-    await Clipboard.setData(ClipboardData(text: info.value));
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
-  }
-
-  Future<void> _open(BuildContext context) async {
-    final uri = Uri.tryParse(info.value);
-    if (uri == null) return;
-    final canOpen = await canLaunchUrl(uri);
-    if (!canOpen) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No compatible app was found.')));
-      return;
-    }
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final canOpen = info.isWeb || info.kind == 'Phone' || info.kind == 'Email';
-    return Container(
-      padding: EdgeInsets.fromLTRB(22, 12, 22, MediaQuery.of(context).viewInsets.bottom + 24),
-      decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
-      child: SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Center(child: Container(width: 42, height: 4, decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(5)))),
-          const SizedBox(height: 22),
-          Text(info.kind.toUpperCase(), style: const TextStyle(color: Color(0xFF6555E8), fontWeight: FontWeight.w800, letterSpacing: 1)),
-          const SizedBox(height: 8),
-          Text(info.title, style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 8),
-          Text(info.subtitle, style: const TextStyle(color: Colors.black54)),
-          const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(color: const Color(0xFFF5F4FA), borderRadius: BorderRadius.circular(16)),
-            child: SelectableText(info.value, style: const TextStyle(fontSize: 13, height: 1.4)),
-          ),
-          const SizedBox(height: 18),
-          Row(children: [
-            Expanded(child: OutlinedButton.icon(onPressed: () => _copy(context), icon: const Icon(Icons.copy_rounded), label: const Text('Copy'))),
-            if (canOpen) ...[
-              const SizedBox(width: 10),
-              Expanded(child: FilledButton.icon(onPressed: () => _open(context), icon: const Icon(Icons.open_in_new_rounded), label: const Text('Open'))),
-            ],
-          ]),
-          const SizedBox(height: 8),
-          const Text('Check the destination before opening links or making payments.', style: TextStyle(fontSize: 11, color: Colors.black45)),
-        ]),
-      ),
-    );
-  }
-}
