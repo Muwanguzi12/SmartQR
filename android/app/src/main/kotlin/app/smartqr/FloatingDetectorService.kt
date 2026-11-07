@@ -9,6 +9,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -34,7 +35,7 @@ class FloatingDetectorService : Service() {
 
     private fun params(width: Int, height: Int): WindowManager.LayoutParams {
         val type = if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+            else WindowManager.LayoutParams.TYPE_PHONE
         return WindowManager.LayoutParams(
             width, height, type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
@@ -55,7 +56,40 @@ class FloatingDetectorService : Service() {
             gravity = Gravity.CENTER
             background = rounded(Color.rgb(101, 85, 232), 100f)
             elevation = 12f
-            setOnClickListener { togglePanel() }
+            var downX = 0f
+            var downY = 0f
+            var startX = 0
+            var startY = 0
+            var moved = false
+            setOnTouchListener { view, event ->
+                val layout = view.layoutParams as WindowManager.LayoutParams
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downX = event.rawX
+                        downY = event.rawY
+                        startX = layout.x
+                        startY = layout.y
+                        moved = false
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = (event.rawX - downX).toInt()
+                        val dy = (event.rawY - downY).toInt()
+                        if (kotlin.math.abs(dx) > 5 || kotlin.math.abs(dy) > 5) moved = true
+                        if (moved) {
+                            layout.x = (startX - dx).coerceAtLeast(0)
+                            layout.y = (startY + dy).coerceAtLeast(0)
+                            windowManager.updateViewLayout(view, layout)
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (!moved) togglePanel()
+                        true
+                    }
+                    else -> true
+                }
+            }
         }
         windowManager.addView(bubble, params(58, 58))
     }
