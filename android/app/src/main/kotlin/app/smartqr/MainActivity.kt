@@ -1,50 +1,108 @@
 package app.smartqr
 
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.PixelFormat
-import android.media.ImageReader
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
+import android.content.IntentFilter
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.util.DisplayMetrics
+import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import java.io.File
-import java.io.FileOutputStream
 
 class MainActivity : FlutterActivity() {
-    private val channelName = "app.smartqr/screen_capture"
+    private val captureChannelName = "app.smartqr/screen_capture"
+    private val overlayChannelName = "app.smartqr/overlay"
     private val requestCode = 7412
     private var pendingResult: MethodChannel.Result? = null
-    private var projection: MediaProjection? = null
-    private var reader: ImageReader? = null
-    private var channel: MethodChannel? = null
+    private var captureChannel: MethodChannel? = null
+    private var overlayChannel: MethodChannel? = null
+
+    private val captureReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val path = intent?.getStringExtra(ScreenCaptureForegroundService.EXTRA_PATH)
+            if (!path.isNullOrBlank()) {
+                pendingResult?.success(path)
+            } else {
+                pendingResult?.error("CAPTURE_FAILED", "The screen frame could not be captured.", null)
+            }
+            pendingResult = null
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val filter = IntentFilter(ScreenCaptureForegroundService.ACTION_CAPTURE_COMPLETE)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(captureReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(captureReceiver, filter)
+        }
+        handleFloatingIntent(intent)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
-        channel?.setMethodCallHandler { call, result ->
+        captureChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, captureChannelName)
+        captureChannel?.setMethodCallHandler { call, result ->
             if (call.method == "captureScreen") {
                 if (pendingResult != null) {
                     result.error("BUSY", "A screen capture is already in progress.", null)
                     return@setMethodCallHandler
                 }
                 pendingResult = result
-                val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
                 startActivityForResult(manager.createScreenCaptureIntent(), requestCode)
             } else {
                 result.notImplemented()
             }
         }
+
+        overlayChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, overlayChannelName)
+        overlayChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "hasOverlayPermission" -> result.success(Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this))
+                "requestOverlayPermission" -> {
+                    if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+                        startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                    }
+                    result.success(null)
+                }
+                "startFloatingDetector" -> {
+                    if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+                        result.error("OVERLAY_PERMISSION", "Display-over-other-apps permission is required.", null)
+                    } else {
+                        startService(Intent(this, FloatingDetectorService::class.java))
+                        result.success(true)
+                    }
+                }
+                "stopFloatingDetector" -> {
+                    stopService(Intent(this, FloatingDetectorService::class.java))
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
-    @Deprecated("Deprecated in Android API; retained for broad device compatibility")
+    private fun handleFloatingIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(FloatingDetectorService.EXTRA_SCAN_SCREEN, false) == true) {
+            intent.removeExtra(FloatingDetectorService.EXTRA_SCAN_SCREEN)
+            overlayChannel?.invokeMethod("scanCurrentScreen", null)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleFloatingIntent(intent)
+    }
+
+    @Deprecated("Deprecated Android API retained for broad device compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != this.requestCode) return
@@ -53,76 +111,20 @@ class MainActivity : FlutterActivity() {
             pendingResult = null
             return
         }
+        val serviceIntent = Intent(this, ScreenCaptureForegroundService::class.java).apply {
+            putExtra(ScreenCaptureForegroundService.EXTRA_RESULT_CODE, resultCode)
+            putExtra(ScreenCaptureForegroundService.EXTRA_RESULT_DATA, data)
+        }
         try {
-            val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            projection = manager.getMediaProjection(resultCode, data)
-            captureOneFrame()
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(serviceIntent) else startService(serviceIntent)
         } catch (error: Exception) {
-            finishWithError("CAPTURE_FAILED", error.message ?: "Could not capture the screen.")
+            pendingResult?.error("CAPTURE_FAILED", error.message ?: "Could not start screen capture service.", null)
+            pendingResult = null
         }
     }
 
-    private fun captureOneFrame() {
-        val metrics = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        windowManager.defaultDisplay.getRealMetrics(metrics)
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
-        reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        val display = projection?.createVirtualDisplay(
-            "SmartQR-screen-scan",
-            width,
-            height,
-            metrics.densityDpi,
-            0,
-            reader!!.surface,
-            null,
-            Handler(Looper.getMainLooper())
-        ) ?: throw IllegalStateException("Unable to create screen capture display.")
-
-        reader?.setOnImageAvailableListener({ imageReader ->
-            val image = imageReader.acquireLatestImage() ?: return@setOnImageAvailableListener
-            try {
-                val plane = image.planes[0]
-                val buffer = plane.buffer
-                val pixelStride = plane.pixelStride
-                val rowStride = plane.rowStride
-                val paddedWidth = rowStride / pixelStride
-                val bitmap = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
-                bitmap.copyPixelsFromBuffer(buffer)
-                val cropped = Bitmap.createBitmap(bitmap, 0, 0, width, height)
-                val output = File(cacheDir, "smartqr-screen-${System.currentTimeMillis()}.png")
-                FileOutputStream(output).use { stream -> cropped.compress(Bitmap.CompressFormat.PNG, 100, stream) }
-                bitmap.recycle()
-                cropped.recycle()
-                image.close()
-                display.release()
-                cleanupProjection()
-                pendingResult?.success(output.absolutePath)
-                pendingResult = null
-            } catch (error: Exception) {
-                image.close()
-                display.release()
-                finishWithError("IMAGE_FAILED", error.message ?: "Could not save the captured frame.")
-            }
-        }, Handler(Looper.getMainLooper()))
-    }
-
-    private fun cleanupProjection() {
-        reader?.close()
-        reader = null
-        projection?.stop()
-        projection = null
-    }
-
-    private fun finishWithError(code: String, message: String) {
-        cleanupProjection()
-        pendingResult?.error(code, message, null)
-        pendingResult = null
-    }
-
     override fun onDestroy() {
-        cleanupProjection()
+        try { unregisterReceiver(captureReceiver) } catch (_: Exception) {}
         super.onDestroy()
     }
 }
