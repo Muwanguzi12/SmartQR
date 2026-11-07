@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.provider.ContactsContract
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -90,15 +91,31 @@ class MainActivity : FlutterActivity() {
         }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, actionsChannelName)
             .setMethodCallHandler { call, result ->
-                if (call.method == "openWifiSettings") {
-                    try {
-                        startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
-                        result.success(true)
-                    } catch (error: Exception) {
-                        result.error("WIFI_SETTINGS", error.message, null)
+                when (call.method) {
+                    "openWifiSettings" -> {
+                        try {
+                            startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+                            result.success(true)
+                        } catch (error: Exception) {
+                            result.error("WIFI_SETTINGS", error.message, null)
+                        }
                     }
-                } else {
-                    result.notImplemented()
+                    "createContact" -> {
+                        try {
+                            val values = call.arguments as? Map<*, *> ?: emptyMap<String, Any>()
+                            val insert = Intent(Intent.ACTION_INSERT, ContactsContract.Contacts.CONTENT_URI).apply {
+                                putExtra(ContactsContract.Intents.Insert.NAME, values["name"] as? String ?: "")
+                                putExtra(ContactsContract.Intents.Insert.PHONE, values["phone"] as? String ?: "")
+                                putExtra(ContactsContract.Intents.Insert.EMAIL, values["email"] as? String ?: "")
+                                putExtra(ContactsContract.Intents.Insert.COMPANY, values["company"] as? String ?: "")
+                            }
+                            startActivity(insert)
+                            result.success(true)
+                        } catch (error: Exception) {
+                            result.error("CONTACT_INSERT", error.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
                 }
             }
         handleFloatingIntent(intent)
