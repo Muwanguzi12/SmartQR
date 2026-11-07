@@ -1,0 +1,151 @@
+package app.smartqr
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.PixelFormat
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.ImageReader
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.util.DisplayMetrics
+import java.io.File
+import java.io.FileOutputStream
+
+class ScreenCaptureForegroundService : Service() {
+    companion object {
+        const val ACTION_CAPTURE_COMPLETE = "app.smartqr.CAPTURE_COMPLETE"
+        const val EXTRA_PATH = "capture_path"
+        const val EXTRA_RESULT_CODE = "result_code"
+        const val EXTRA_RESULT_DATA = "result_data"
+        private const val CHANNEL_ID = "smartqr_screen_capture"
+        private const val NOTIFICATION_ID = 7413
+    }
+
+    private var projection: MediaProjection? = null
+    private var reader: ImageReader? = null
+    private var display: VirtualDisplay? = null
+    private var completed = false
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        createNotificationChannel()
+        val notification = Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("SmartQR screen scan")
+            .setContentText("Capturing one frame after your approval")
+            .setSmallIcon(android.R.drawable.ic_menu_search)
+            .setOngoing(true)
+            .build()
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+
+        val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
+        val data = if (Build.VERSION.SDK_INT >= 33) {
+            intent?.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent?.getParcelableExtra(EXTRA_RESULT_DATA)
+        }
+        if (data == null || resultCode == 0) {
+            finish(null)
+            return START_NOT_STICKY
+        }
+
+        try {
+            val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            projection = manager.getMediaProjection(resultCode, data)
+            projection?.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    finish(null)
+                }
+            }, Handler(Looper.getMainLooper()))
+            captureOneFrame()
+        } catch (_: Exception) {
+            finish(null)
+        }
+        return START_NOT_STICKY
+    }
+
+    private fun captureOneFrame() {
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        (getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager)
+            .defaultDisplay.getRealMetrics(metrics)
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
+        reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        reader?.setOnImageAvailableListener({ source ->
+            val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
+            try {
+                val plane = image.planes[0]
+                val paddedWidth = plane.rowStride / plane.pixelStride
+                val bitmap = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
+                bitmap.copyPixelsFromBuffer(plane.buffer)
+                val cropped = Bitmap.createBitmap(bitmap, 0, 0, width, height)
+                val file = File(cacheDir, "smartqr-frame-${System.currentTimeMillis()}.png")
+                FileOutputStream(file).use { cropped.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+                cropped.recycle()
+                image.close()
+                finish(file.absolutePath)
+            } catch (_: Exception) {
+                image.close()
+                finish(null)
+            }
+        }, Handler(Looper.getMainLooper()))
+
+        display = projection?.createVirtualDisplay(
+            "SmartQR-one-frame",
+            width,
+            height,
+            metrics.densityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            reader!!.surface,
+            null,
+            Handler(Looper.getMainLooper())
+        )
+        if (display == null) finish(null)
+    }
+
+    private fun finish(path: String?) {
+        if (completed) return
+        completed = true
+        val result = Intent(ACTION_CAPTURE_COMPLETE).setPackage(packageName)
+            .putExtra(EXTRA_PATH, path)
+        sendBroadcast(result)
+        display?.release()
+        display = null
+        reader?.close()
+        reader = null
+        try { projection?.stop() } catch (_: Exception) {}
+        projection = null
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= 26) {
+            val channel = NotificationChannel(CHANNEL_ID, "Screen scanning", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+    }
+
+    override fun onDestroy() {
+        if (!completed) finish(null)
+        super.onDestroy()
+    }
+}
