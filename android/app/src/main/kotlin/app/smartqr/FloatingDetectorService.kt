@@ -16,10 +16,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 class FloatingDetectorService : Service() {
-    companion object {
-        const val EXTRA_SCAN_SCREEN = "smartqr_scan_screen"
-    }
-
     private lateinit var windowManager: WindowManager
     private var bubble: TextView? = null
     private var panel: LinearLayout? = null
@@ -122,10 +118,9 @@ class FloatingDetectorService : Service() {
         container.addView(Button(this).apply {
             text = "Scan this screen"
             setOnClickListener {
-                val launch = Intent(this@FloatingDetectorService, MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    .putExtra(EXTRA_SCAN_SCREEN, true)
-                startActivity(launch)
+                val capture = Intent(this@FloatingDetectorService, ScreenCaptureConsentActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(capture)
                 togglePanel()
             }
         })
