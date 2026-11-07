@@ -16,6 +16,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val captureChannelName = "app.smartqr/screen_capture"
     private val overlayChannelName = "app.smartqr/overlay"
+    private val actionsChannelName = "app.smartqr/actions"
     private val requestCode = 7412
     private var pendingResult: MethodChannel.Result? = null
     private var captureChannel: MethodChannel? = null
@@ -87,6 +88,20 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, actionsChannelName)
+            .setMethodCallHandler { call, result ->
+                if (call.method == "openWifiSettings") {
+                    try {
+                        startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+                        result.success(true)
+                    } catch (error: Exception) {
+                        result.error("WIFI_SETTINGS", error.message, null)
+                    }
+                } else {
+                    result.notImplemented()
+                }
+            }
+        handleFloatingIntent(intent)
     }
 
     private fun handleFloatingIntent(intent: Intent?) {
