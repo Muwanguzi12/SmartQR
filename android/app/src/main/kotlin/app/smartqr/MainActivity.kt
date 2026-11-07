@@ -22,6 +22,7 @@ class MainActivity : FlutterActivity() {
     private var pendingResult: MethodChannel.Result? = null
     private var captureChannel: MethodChannel? = null
     private var overlayChannel: MethodChannel? = null
+    private var pendingFloatingScan = false
 
     private val captureReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -68,6 +69,11 @@ class MainActivity : FlutterActivity() {
         overlayChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "hasOverlayPermission" -> result.success(Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this))
+                "consumePendingFloatingScan" -> {
+                    val pending = pendingFloatingScan
+                    pendingFloatingScan = false
+                    result.success(pending)
+                }
                 "requestOverlayPermission" -> {
                     if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
                         startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
@@ -124,7 +130,12 @@ class MainActivity : FlutterActivity() {
     private fun handleFloatingIntent(intent: Intent?) {
         if (intent?.getBooleanExtra(FloatingDetectorService.EXTRA_SCAN_SCREEN, false) == true) {
             intent.removeExtra(FloatingDetectorService.EXTRA_SCAN_SCREEN)
-            overlayChannel?.invokeMethod("scanCurrentScreen", null)
+            pendingFloatingScan = true
+            overlayChannel?.invokeMethod("scanCurrentScreen", null, object : MethodChannel.Result {
+                override fun success(result: Any?) { pendingFloatingScan = false }
+                override fun error(code: String, message: String?, details: Any?) {}
+                override fun notImplemented() {}
+            })
         }
     }
 
