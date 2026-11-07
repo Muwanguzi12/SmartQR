@@ -15,6 +15,9 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    companion object {
+        const val EXTRA_CAPTURED_SCREEN_PATH = "captured_screen_path"
+    }
     private val captureChannelName = "app.smartqr/screen_capture"
     private val overlayChannelName = "app.smartqr/overlay"
     private val actionsChannelName = "app.smartqr/actions"
@@ -22,7 +25,7 @@ class MainActivity : FlutterActivity() {
     private var pendingResult: MethodChannel.Result? = null
     private var captureChannel: MethodChannel? = null
     private var overlayChannel: MethodChannel? = null
-    private var pendingFloatingScan = false
+    private var pendingCapturedScreenPath: String? = null
 
     private val captureReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -45,7 +48,7 @@ class MainActivity : FlutterActivity() {
             @Suppress("DEPRECATION")
             registerReceiver(captureReceiver, filter)
         }
-        handleFloatingIntent(intent)
+        handleCapturedScreenIntent(intent)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -69,10 +72,10 @@ class MainActivity : FlutterActivity() {
         overlayChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "hasOverlayPermission" -> result.success(Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this))
-                "consumePendingFloatingScan" -> {
-                    val pending = pendingFloatingScan
-                    pendingFloatingScan = false
-                    result.success(pending)
+                "consumePendingCapturedScreen" -> {
+                    val path = pendingCapturedScreenPath
+                    pendingCapturedScreenPath = null
+                    result.success(path)
                 }
                 "requestOverlayPermission" -> {
                     if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
@@ -95,6 +98,8 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        deliverPendingCapturedScreen()
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, actionsChannelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -127,22 +132,28 @@ class MainActivity : FlutterActivity() {
         handleFloatingIntent(intent)
     }
 
-    private fun handleFloatingIntent(intent: Intent?) {
-        if (intent?.getBooleanExtra(FloatingDetectorService.EXTRA_SCAN_SCREEN, false) == true) {
-            intent.removeExtra(FloatingDetectorService.EXTRA_SCAN_SCREEN)
-            pendingFloatingScan = true
-            overlayChannel?.invokeMethod("scanCurrentScreen", null, object : MethodChannel.Result {
-                override fun success(result: Any?) { pendingFloatingScan = false }
-                override fun error(code: String, message: String?, details: Any?) {}
-                override fun notImplemented() {}
-            })
-        }
+    private fun handleCapturedScreenIntent(intent: Intent?) {
+        val path = intent?.getStringExtra(EXTRA_CAPTURED_SCREEN_PATH) ?: return
+        intent.removeExtra(EXTRA_CAPTURED_SCREEN_PATH)
+        pendingCapturedScreenPath = path
+        deliverPendingCapturedScreen()
+    }
+
+    private fun deliverPendingCapturedScreen() {
+        val path = pendingCapturedScreenPath ?: return
+        overlayChannel?.invokeMethod("screenCaptureReady", path, object : MethodChannel.Result {
+            override fun success(result: Any?) {
+                if (pendingCapturedScreenPath == path) pendingCapturedScreenPath = null
+            }
+            override fun error(code: String, message: String?, details: Any?) {}
+            override fun notImplemented() {}
+        })
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleFloatingIntent(intent)
+        handleCapturedScreenIntent(intent)
     }
 
     @Deprecated("Deprecated Android API retained for broad device compatibility")
