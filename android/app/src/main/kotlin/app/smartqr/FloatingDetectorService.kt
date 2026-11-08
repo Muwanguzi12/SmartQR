@@ -58,7 +58,7 @@ class FloatingDetectorService : Service() {
             registerReceiver(captureReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             @Suppress("DEPRECATION")
-            registerReceiver(captureReceiver, filter)
+            registerReceiver(captureReceiver, filter, "app.smartqr.permission.INTERNAL", null)
         }
         receiverRegistered = true
     }
@@ -169,23 +169,40 @@ class FloatingDetectorService : Service() {
     }
 
     private fun decodeCapturedFrame(path: String) {
-        val file = File(path)
-        if (!file.exists()) {
-            showMessage("The screen image is no longer available.")
+        // Accept only a regular file created inside this app's private cache.
+        val file = try { File(path).canonicalFile } catch (_: Exception) {
+            showMessage("The screen image is invalid.")
             return
         }
+        val privateCache = try { cacheDir.canonicalFile } catch (_: Exception) {
+            showMessage("SmartQR could not access its temporary storage.")
+            return
+        }
+        if (file.parentFile != privateCache || !file.isFile || file.length() !in 1..(25L * 1024L * 1024L)) {
+            try { if (file.parentFile == privateCache) file.delete() } catch (_: Exception) {}
+            showMessage("The screen image is invalid or too large.")
+            return
+        }
+
         try {
             val image = InputImage.fromFilePath(this, Uri.fromFile(file))
-            BarcodeScanning.getClient().process(image)
+            val scanner = BarcodeScanning.getClient()
+            scanner.process(image)
                 .addOnSuccessListener { barcodes ->
                     val value = barcodes.firstOrNull { !it.rawValue.isNullOrBlank() }?.rawValue
-                    if (value.isNullOrBlank()) showMessage("No QR code or barcode was found on this screen.")
-                    else showResult(value)
+                    if (value.isNullOrBlank()) {
+                        showMessage("No QR code or barcode was found on this screen.")
+                    } else if (value.length > 16_384) {
+                        showMessage("This QR code contains too much data to process safely.")
+                    } else {
+                        showResult(value)
+                    }
                 }
                 .addOnFailureListener {
                     showMessage("SmartQR could not read this screen. Please try again.")
                 }
                 .addOnCompleteListener {
+                    try { scanner.close() } catch (_: Exception) {}
                     try { file.delete() } catch (_: Exception) {}
                 }
         } catch (_: Exception) {
@@ -275,6 +292,7 @@ class FloatingDetectorService : Service() {
     }
 
     private fun parseVCard(payload: String): ContactCard? {
+        if (payload.length > 16_384) return null
         if (!payload.trimStart().startsWith("BEGIN:VCARD", ignoreCase = true)) return null
         val values = mutableMapOf<String, MutableList<String>>()
         for (line in unfoldVCardLines(payload)) {
@@ -439,19 +457,40 @@ class FloatingDetectorService : Service() {
             return
         }
         val trimmed = value.trim()
-        val intent = when {
-            trimmed.startsWith("https://", true) || trimmed.startsWith("http://", true) ->
-                Intent(Intent.ACTION_VIEW, Uri.parse(trimmed))
-            trimmed.startsWith("mailto:", true) ->
-                Intent(Intent.ACTION_SENDTO, Uri.parse(trimmed))
-            trimmed.startsWith("tel:", true) ->
-                Intent(Intent.ACTION_DIAL, Uri.parse(trimmed))
-            trimmed.matches(Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) ->
-                Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$trimmed"))
-            else -> null
+        if (trimmed.length > 2_048 || trimmed.any { it.isISOControl() }) {
+            showMessage("This QR content is not safe to open. You can copy it instead.")
+            return
         }
+
+        val intent = try {
+            when {
+                trimmed.startsWith("https://", true) || trimmed.startsWith("http://", true) -> {
+                    val uri = Uri.parse(trimmed)
+                    val scheme = uri.scheme?.lowercase()
+                    if (scheme !in setOf("http", "https") || uri.host.isNullOrBlank() ||
+                        uri.userInfo != null || uri.toString().length > 2_048) null
+                    else Intent(Intent.ACTION_VIEW, uri)
+                }
+                trimmed.startsWith("mailto:", true) -> {
+                    val address = Uri.parse(trimmed).schemeSpecificPart.substringBefore('?').trim()
+                    if (address.matches(Regex("^[^\\s@<>]+@[^\\s@<>]+\\.[^\\s@<>]+$"))) {
+                        Intent(Intent.ACTION_SENDTO, Uri.fromParts("mailto", address, null))
+                    } else null
+                }
+                trimmed.startsWith("tel:", true) -> {
+                    val number = Uri.parse(trimmed).schemeSpecificPart
+                    if (number.matches(Regex("^[+0-9(). -]{3,32}$"))) {
+                        Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null))
+                    } else null
+                }
+                trimmed.matches(Regex("^[^\\s@<>]+@[^\\s@<>]+\\.[^\\s@<>]+$")) ->
+                    Intent(Intent.ACTION_SENDTO, Uri.fromParts("mailto", trimmed, null))
+                else -> null
+            }
+        } catch (_: Exception) { null }
+
         if (intent == null) {
-            showMessage("This QR content is ready to copy. More actions will be supported in SmartQR.")
+            showMessage("This QR content is not a supported link or contact action. You can copy it instead.")
             return
         }
         try {
