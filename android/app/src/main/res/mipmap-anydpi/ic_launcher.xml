@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="48dp" android:height="48dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#663DE2" android:pathData="M0,0h108v108h-108z"/>
+    <!-- Match the adaptive icon's centered 80% artwork scale (10% bezel). -->
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.8" android:scaleY="0.8">
+        <path android:fillColor="#FFFFFFFF" android:pathData="M18,20h23v5h-18v18h-5z M67,20h23v23h-5v-18h-18z M18,67h5v18h18v5h-23z M85,67h5v23h-23v-5h18z"/>
+        <path android:fillColor="#FFFFFFFF" android:pathData="M27,29h17v17h-17z M32,34h7v7h-7z M64,29h17v17h-17z M69,34h7v7h-7z M27,64h17v17h-17z M32,69h7v7h-7z M51,30h7v7h-7z M51,42h7v7h-7z M47,54h7v7h-7z M59,54h7v7h-7z M51,66h7v7h-7z M63,70h7v7h-7z M75,54h6v6h-6z"/>
+        <path android:fillColor="#FFB7FF" android:pathData="M12,52h84v3h-84z"/>
+        <path android:fillColor="#FFFFFFFF" android:pathData="M72,61l-12,20h10l-3,14 20,-25h-12l5,-9z"/>
+    </group>
+</vector>

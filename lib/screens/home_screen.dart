@@ -1,11 +1,13 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:image_picker/image_picker.dart';
-import '../models/scan_entry.dart';
 import '../services/barcode_service.dart';
-import '../services/destination_service.dart';
+import '../services/action_router.dart';
+import '../services/floating_detector_service.dart';
 import '../services/history_service.dart';
+import '../services/destination_service.dart';
 import '../services/screen_capture_service.dart';
 import 'scanner_screen.dart';
 
@@ -19,29 +21,19 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _picker = ImagePicker();
   final _barcodeService = BarcodeService();
-  final _history = HistoryService();
   final _screenCapture = ScreenCaptureService();
-  List<ScanEntry> _entries = [];
   bool _busy = false;
 
   @override
   void initState() {
     super.initState();
-    _loadHistory();
+    unawaited(HistoryService().clear());
+    FloatingDetectorService.listenForScan(_handleCapturedScreen);
   }
 
-  Future<void> _loadHistory() async {
-    final items = await _history.load();
-    if (mounted) setState(() => _entries = items);
-  }
-
-  Future<void> _showResult(String value, {String type = 'QR / barcode'}) async {
+  Future<void> _showResult(String value) async {
     if (!mounted || value.trim().isEmpty) return;
-    final clean = value.trim();
-    await _history.add(ScanEntry(value: clean, type: type, scannedAt: DateTime.now()));
-    await _loadHistory();
-    if (!mounted) return;
-    final info = DestinationService.classify(clean);
+    final info = DestinationService.classify(value.trim());
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -61,10 +53,26 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _busy = true);
     try {
       final path = await _screenCapture.captureScreen();
-      if (path != null) await _decodeImage(path);
+      if (path != null) {
+        try { await _decodeImage(path); } finally { try { await File(path).delete(); } catch (_) {} }
+      }
     } catch (error) {
       if (mounted) _message(error.toString().replaceFirst('PlatformException(', ''));
     } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _handleCapturedScreen(String path) async {
+    if (!mounted || _busy) {
+      try { await File(path).delete(); } catch (_) {}
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await _decodeImage(path);
+    } finally {
+      try { await File(path).delete(); } catch (_) {}
       if (mounted) setState(() => _busy = false);
     }
   }
@@ -86,12 +94,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _enableFloatingDetector() async {
+    final enabled = await FloatingDetectorService.enable();
+    if (mounted) _message(enabled ? 'Floating SmartQR detector is ready.' : 'Allow SmartQR to display over other apps, then try again.');
+  }
+
   void _message(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
   @override
   void dispose() {
+    FloatingDetectorService.stopListening();
     _barcodeService.dispose();
     super.dispose();
   }
@@ -109,9 +123,9 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: 'Scan history',
-            onPressed: () => _showHistory(),
-            icon: const Icon(Icons.history_rounded),
+            tooltip: 'Floating detector',
+            onPressed: _enableFloatingDetector,
+            icon: const Icon(Icons.picture_in_picture_alt_rounded),
           ),
         ],
       ),
@@ -168,71 +182,14 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: EdgeInsets.only(top: 14),
               child: LinearProgressIndicator(),
             ),
-            const SizedBox(height: 26),
-            Row(
-              children: [
-                const Expanded(child: Text('Recent scans', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800))),
-                TextButton(onPressed: _showHistory, child: const Text('See all')),
-              ],
-            ),
-            if (_entries.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 22),
-                child: Center(child: Text('Your recent scans will appear here.', style: TextStyle(color: Colors.black54))),
-              )
-            else
-              ..._entries.take(4).map((entry) => _HistoryTile(entry: entry, onTap: () => _showResult(entry.value, type: entry.type))),
+
           ],
         ),
       ),
     );
   }
 
-  void _showHistory() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: SizedBox(
-          height: MediaQuery.of(context).size.height * .72,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(18),
-                child: Row(
-                  children: [
-                    const Expanded(child: Text('Scan history', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
-                    TextButton(
-                      onPressed: () async {
-                        await _history.clear();
-                        await _loadHistory();
-                        if (sheetContext.mounted) Navigator.pop(sheetContext);
-                      },
-                      child: const Text('Clear'),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: _entries.isEmpty
-                    ? const Center(child: Text('No scans yet'))
-                    : ListView.builder(
-                        itemCount: _entries.length,
-                        itemBuilder: (_, index) {
-                          final entry = _entries[index];
-                          return _HistoryTile(entry: entry, onTap: () {
-                            Navigator.pop(sheetContext);
-                            _showResult(entry.value, type: entry.type);
-                          });
-                        },
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+
 }
 
 class _ActionTile extends StatelessWidget {
@@ -260,20 +217,6 @@ class _ActionTile extends StatelessWidget {
       );
 }
 
-class _HistoryTile extends StatelessWidget {
-  const _HistoryTile({required this.entry, required this.onTap});
-  final ScanEntry entry;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => ListTile(
-        contentPadding: const EdgeInsets.symmetric(vertical: 3),
-        leading: const CircleAvatar(backgroundColor: Color(0xFFECE9FF), child: Icon(Icons.qr_code_2_rounded, color: Color(0xFF6555E8))),
-        title: Text(entry.value, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(entry.type),
-        onTap: onTap,
-      );
-}
 
 class _ResultSheet extends StatelessWidget {
   const _ResultSheet({required this.info});
@@ -281,26 +224,26 @@ class _ResultSheet extends StatelessWidget {
 
   Future<void> _copy(BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: info.value));
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Copied to clipboard')),
+      );
+    }
   }
 
-  Future<void> _open(BuildContext context) async {
-    final uri = Uri.tryParse(info.value);
-    if (uri == null) return;
-    final canOpen = await canLaunchUrl(uri);
-    if (!canOpen) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No compatible app was found.')));
-      return;
-    }
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  Future<void> _execute(BuildContext context) async {
+    await ActionRouter.execute(context, info);
   }
 
   @override
   Widget build(BuildContext context) {
-    final canOpen = info.isWeb || info.kind == 'Phone' || info.kind == 'Email';
+    final canExecute = info.kind != 'Text';
     return Container(
       padding: EdgeInsets.fromLTRB(22, 12, 22, MediaQuery.of(context).viewInsets.bottom + 24),
-      decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
       child: SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Center(child: Container(width: 42, height: 4, decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(5)))),
@@ -320,13 +263,13 @@ class _ResultSheet extends StatelessWidget {
           const SizedBox(height: 18),
           Row(children: [
             Expanded(child: OutlinedButton.icon(onPressed: () => _copy(context), icon: const Icon(Icons.copy_rounded), label: const Text('Copy'))),
-            if (canOpen) ...[
+            if (canExecute) ...[
               const SizedBox(width: 10),
-              Expanded(child: FilledButton.icon(onPressed: () => _open(context), icon: const Icon(Icons.open_in_new_rounded), label: const Text('Open'))),
+              Expanded(child: FilledButton.icon(onPressed: () => _execute(context), icon: const Icon(Icons.open_in_new_rounded), label: Text(info.kind == 'Wi-Fi' ? 'Connect' : 'Continue'))),
             ],
           ]),
           const SizedBox(height: 8),
-          const Text('Check the destination before opening links or making payments.', style: TextStyle(fontSize: 11, color: Colors.black45)),
+          const Text('Review the destination before continuing. SmartQR does not run payment or external actions silently.', style: TextStyle(fontSize: 11, color: Colors.black45)),
         ]),
       ),
     );
