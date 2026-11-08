@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission android:name="app.smartqr.permission.INTERNAL" android:protectionLevel="signature" />
+    <uses-permission android:name="app.smartqr.permission.INTERNAL" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
