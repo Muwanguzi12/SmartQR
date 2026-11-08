@@ -12,6 +12,7 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.provider.ContactsContract
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
@@ -195,7 +196,97 @@ class FloatingDetectorService : Service() {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
+    private data class ContactCard(
+        val name: String,
+        val phone: String,
+        val email: String,
+        val company: String,
+        val organizationTitle: String,
+        val raw: String
+    )
+
+    private fun unfoldVCardLines(payload: String): List<String> {
+        val physical = payload.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        val logical = mutableListOf<String>()
+        for (line in physical) {
+            if (logical.isNotEmpty() && (line.startsWith(" ") || line.startsWith("\t"))) {
+                logical[logical.lastIndex] += line.drop(1)
+            } else if (logical.isNotEmpty() && logical.last().endsWith("=")) {
+                logical[logical.lastIndex] = logical.last().dropLast(1) + line
+            } else {
+                logical += line
+            }
+        }
+        return logical
+    }
+
+    private fun splitVCardProperty(line: String): Pair<String, String>? {
+        var quoted = false
+        var escaped = false
+        for (index in line.indices) {
+            val char = line[index]
+            if (escaped) { escaped = false; continue }
+            if (char == '\\\\') { escaped = true; continue }
+            if (char == '"') { quoted = !quoted; continue }
+            if (char == ':' && !quoted) return line.substring(0, index) to line.substring(index + 1)
+        }
+        return null
+    }
+
+    private fun unescapeVCard(value: String): String {
+        val output = StringBuilder()
+        var index = 0
+        while (index < value.length) {
+            if (value[index] == '\\\\' && index + 1 < value.length) {
+                when (val next = value[index + 1]) {
+                    'n', 'N' -> output.append('\n')
+                    '\\\\', ',', ';' -> output.append(next)
+                    else -> { output.append('\\\\'); output.append(next) }
+                }
+                index += 2
+            } else {
+                output.append(value[index])
+                index++
+            }
+        }
+        return output.toString().trim()
+    }
+
+    private fun parseVCard(payload: String): ContactCard? {
+        if (!payload.trimStart().startsWith("BEGIN:VCARD", ignoreCase = true)) return null
+        val values = mutableMapOf<String, MutableList<String>>()
+        for (line in unfoldVCardLines(payload)) {
+            val pair = splitVCardProperty(line) ?: continue
+            val rawKey = pair.first.substringAfterLast('.')
+            val key = rawKey.substringBefore(';').uppercase()
+            if (key.isBlank() || key.startsWith("BEGIN") || key.startsWith("END") || key == "VERSION") continue
+            val decoded = unescapeVCard(pair.second)
+            if (decoded.isNotBlank()) values.getOrPut(key) { mutableListOf() }.add(decoded)
+        }
+        fun first(vararg keys: String): String = keys.firstNotNullOfOrNull { key ->
+            values[key]?.firstOrNull()?.takeIf { it.isNotBlank() }
+        } ?: ""
+        val structuredName = first("N").split(';')
+        val fallbackName = listOf(
+            structuredName.getOrNull(1).orEmpty(),
+            structuredName.firstOrNull().orEmpty(),
+            structuredName.getOrNull(2).orEmpty()
+        ).filter { it.isNotBlank() }.joinToString(" ")
+        val name = first("FN").ifBlank { fallbackName }
+        val phone = first("TEL")
+        val email = first("EMAIL")
+        val company = first("ORG").replace(';', ' ')
+        val title = first("TITLE")
+        if (name.isBlank() && phone.isBlank() && email.isBlank() && company.isBlank()) return null
+        return ContactCard(name, phone, email, company, title, payload)
+    }
+
     private fun showResult(value: String) {
+        val contact = parseVCard(value)
+        if (contact != null) {
+            showContactResult(contact)
+            return
+        }
         removePanel()
         resultPanel?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
         val card = LinearLayout(this).apply {
@@ -242,7 +333,81 @@ class FloatingDetectorService : Service() {
         windowManager.addView(card, params(310, WindowManager.LayoutParams.WRAP_CONTENT))
     }
 
+    private fun showContactResult(contact: ContactCard) {
+        removePanel()
+        resultPanel?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 18, 20, 16)
+            background = rounded(Color.WHITE, 26f)
+            elevation = 22f
+        }
+        card.addView(TextView(this).apply {
+            text = "Contact detected"
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.rgb(32, 28, 48))
+        })
+        val details = listOf(
+            "Name" to contact.name,
+            "Phone" to contact.phone,
+            "Email" to contact.email,
+            "Company" to contact.company,
+            "Title" to contact.organizationTitle
+        ).filter { it.second.isNotBlank() }
+        details.forEach { (label, value) ->
+            card.addView(TextView(this).apply {
+                text = "$label: $value"
+                textSize = 14f
+                setTextColor(Color.DKGRAY)
+                setPadding(0, 8, 0, 0)
+            })
+        }
+        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        buttons.addView(Button(this).apply {
+            text = "Copy"
+            setOnClickListener {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("SmartQR contact", contact.raw))
+                Toast.makeText(this@FloatingDetectorService, "Contact data copied", Toast.LENGTH_SHORT).show()
+            }
+        }, LinearLayout.LayoutParams(0, WindowManager.LayoutParams.WRAP_CONTENT, 1f))
+        buttons.addView(Button(this).apply {
+            text = "Save contact"
+            setOnClickListener {
+                try {
+                    val insert = Intent(Intent.ACTION_INSERT, ContactsContract.Contacts.CONTENT_URI).apply {
+                        putExtra(ContactsContract.Intents.Insert.NAME, contact.name)
+                        putExtra(ContactsContract.Intents.Insert.PHONE, contact.phone)
+                        putExtra(ContactsContract.Intents.Insert.EMAIL, contact.email)
+                        putExtra(ContactsContract.Intents.Insert.COMPANY, contact.company)
+                        putExtra(ContactsContract.Intents.Insert.JOB_TITLE, contact.organizationTitle)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(insert)
+                } catch (_: Exception) {
+                    showMessage("No contacts app is available to save this contact.")
+                }
+            }
+        }, LinearLayout.LayoutParams(0, WindowManager.LayoutParams.WRAP_CONTENT, 1f))
+        card.addView(buttons)
+        card.addView(Button(this).apply {
+            text = "Dismiss"
+            setOnClickListener {
+                resultPanel?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+                resultPanel = null
+            }
+        })
+        resultPanel = card
+        windowManager.addView(card, params(310, WindowManager.LayoutParams.WRAP_CONTENT))
+    }
+
     private fun continueWith(value: String) {
+        val contact = parseVCard(value)
+        if (contact != null) {
+            showContactResult(contact)
+            return
+        }
         val trimmed = value.trim()
         val intent = when {
             trimmed.startsWith("https://", true) || trimmed.startsWith("http://", true) ->
