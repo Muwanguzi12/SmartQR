@@ -226,7 +226,7 @@ class FloatingDetectorService : Service() {
         for (index in line.indices) {
             val char = line[index]
             if (escaped) { escaped = false; continue }
-            if (char == '\\\\') { escaped = true; continue }
+            if (char == '\\') { escaped = true; continue }
             if (char == '"') { quoted = !quoted; continue }
             if (char == ':' && !quoted) return line.substring(0, index) to line.substring(index + 1)
         }
@@ -237,11 +237,11 @@ class FloatingDetectorService : Service() {
         val output = StringBuilder()
         var index = 0
         while (index < value.length) {
-            if (value[index] == '\\\\' && index + 1 < value.length) {
+            if (value[index] == '\\' && index + 1 < value.length) {
                 when (val next = value[index + 1]) {
                     'n', 'N' -> output.append('\n')
-                    '\\\\', ',', ';' -> output.append(next)
-                    else -> { output.append('\\\\'); output.append(next) }
+                    '\\', ',', ';' -> output.append(next)
+                    else -> { output.append('\\'); output.append(next) }
                 }
                 index += 2
             } else {
