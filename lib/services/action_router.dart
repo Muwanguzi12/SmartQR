@@ -95,30 +95,129 @@ class ActionRouter {
     }
   }
 
-  static Future<void> _contact(BuildContext context, String payload) async {
-    final fields = <String, String>{};
-    if (payload.toUpperCase().startsWith('BEGIN:VCARD')) {
-      for (final line in payload.split(RegExp(r'\r?\n'))) {
-        final separator = line.indexOf(':');
-        if (separator < 0) continue;
-        final key = line.substring(0, separator).split(';').first.toUpperCase();
-        final value = line.substring(separator + 1).trim();
-        if (value.isNotEmpty) fields.putIfAbsent(key, () => value);
-      }
-    } else {
-      final body = payload.replaceFirst(RegExp(r'^MECARD:', caseSensitive: false), '');
-      for (final part in body.split(';')) {
-        final separator = part.indexOf(':');
-        if (separator > 0) fields[part.substring(0, separator).toUpperCase()] = part.substring(separator + 1);
+  static List<String> _unfoldContactLines(String payload) {
+    final physical = payload.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
+    final logical = <String>[];
+    for (final line in physical) {
+      if (logical.isNotEmpty && (line.startsWith(' ') || line.startsWith('\t'))) {
+        logical[logical.length - 1] += line.substring(1);
+      } else if (logical.isNotEmpty && logical.last.endsWith('=')) {
+        logical[logical.length - 1] =
+            logical.last.substring(0, logical.last.length - 1) + line;
+      } else {
+        logical.add(line);
       }
     }
+    return logical;
+  }
+
+  static int _propertySeparator(String line) {
+    var quoted = false;
+    var escaped = false;
+    for (var i = 0; i < line.length; i++) {
+      final char = line[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char == r'\') {
+        escaped = true;
+        continue;
+      }
+      if (char == '"') quoted = !quoted;
+      if (char == ':' && !quoted) return i;
+    }
+    return -1;
+  }
+
+  static String _unescapeContactValue(String value) {
+    return value
+        .replaceAll(RegExp(r'\\[nN]'), '\n')
+        .replaceAll(r'\,', ',')
+        .replaceAll(r'\;', ';')
+        .replaceAll(r'\\', r'\')
+        .trim();
+  }
+
+  static Map<String, String> _parseContact(String payload) {
+    final fields = <String, List<String>>{};
+    if (payload.trimLeft().toUpperCase().startsWith('BEGIN:VCARD')) {
+      for (final line in _unfoldContactLines(payload)) {
+        final separator = _propertySeparator(line);
+        if (separator <= 0) continue;
+        final property = line.substring(0, separator);
+        final key = property.split(';').first.split('.').last.toUpperCase();
+        if (key == 'BEGIN' || key == 'END' || key == 'VERSION') continue;
+        var value = line.substring(separator + 1);
+        final params = property.toUpperCase();
+        if (params.contains('ENCODING=QUOTED-PRINTABLE')) {
+          final bytes = <int>[];
+          for (var i = 0; i < value.length; i++) {
+            if (value[i] == '=' && i + 2 < value.length) {
+              final byte = int.tryParse(value.substring(i + 1, i + 3), radix: 16);
+              if (byte != null) {
+                bytes.add(byte);
+                i += 2;
+                continue;
+              }
+            }
+            bytes.addAll(latin1.encode(value[i]));
+          }
+          value = params.contains('CHARSET=UTF-8')
+              ? utf8.decode(bytes, allowMalformed: true)
+              : latin1.decode(bytes, allowInvalid: true);
+        }
+        value = _unescapeContactValue(value);
+        if (value.isNotEmpty) fields.putIfAbsent(key, () => []).add(value);
+      }
+      final structured = (fields['N']?.first ?? '').split(';');
+      final fallbackName = [
+        if (structured.length > 1) structured[1],
+        if (structured.isNotEmpty) structured[0],
+        if (structured.length > 2) structured[2],
+      ].where((part) => part.trim().isNotEmpty).join(' ');
+      return {
+        'name': fields['FN']?.first ?? fallbackName,
+        'phone': fields['TEL']?.first ?? '',
+        'email': fields['EMAIL']?.first ?? '',
+        'company': (fields['ORG']?.first ?? '').replaceAll(';', ' '),
+        'title': fields['TITLE']?.first ?? '',
+      };
+    }
+
+    final body = payload.replaceFirst(RegExp(r'^MECARD:', caseSensitive: false), '');
+    for (final part in body.split(';')) {
+      final separator = part.indexOf(':');
+      if (separator > 0) {
+        final key = part.substring(0, separator).toUpperCase();
+        fields.putIfAbsent(key, () => []).add(
+          _unescapeContactValue(part.substring(separator + 1)),
+        );
+      }
+    }
+    return {
+      'name': fields['N']?.first ?? '',
+      'phone': fields['TEL']?.first ?? '',
+      'email': fields['EMAIL']?.first ?? '',
+      'company': '',
+      'title': '',
+    };
+  }
+
+  static Future<void> _contact(BuildContext context, String payload) async {
+    final fields = _parseContact(payload);
+    final hasContactData = fields.values.any((value) => value.trim().isNotEmpty);
+    if (!hasContactData) {
+      await Clipboard.setData(ClipboardData(text: payload));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Contact details copied. This contact format could not be fully read.')),
+        );
+      }
+      return;
+    }
     try {
-      await _native.invokeMethod('createContact', {
-        'name': fields['FN'] ?? fields['N'] ?? '',
-        'phone': fields['TEL'] ?? '',
-        'email': fields['EMAIL'] ?? '',
-        'company': fields['ORG'] ?? '',
-      });
+      await _native.invokeMethod('createContact', fields);
     } on PlatformException {
       await Clipboard.setData(ClipboardData(text: payload));
       if (context.mounted) {
