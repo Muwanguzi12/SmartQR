@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <permission android:name="app.smartqr.permission.INTERNAL" android:protectionLevel="signature" />
     <uses-permission android:name="app.smartqr.permission.INTERNAL" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -42,6 +42,20 @@
         <service
             android:name=".FloatingDetectorService"
             android:exported="false" />
+
+        <service
+            android:name=".SmartQrQuickSettingsTileService"
+            android:label="SmartQR"
+            android:icon="@mipmap/ic_launcher"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="false" />
+        </service>
 
         <meta-data android:name="flutterEmbedding" android:value="2" />
     </application>
