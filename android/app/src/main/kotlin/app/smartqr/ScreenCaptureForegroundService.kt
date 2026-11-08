@@ -137,7 +137,7 @@ class ScreenCaptureForegroundService : Service() {
         completed = true
         val result = Intent(ACTION_CAPTURE_COMPLETE).setPackage(packageName)
             .putExtra(EXTRA_PATH, path)
-        sendBroadcast(result)
+        sendBroadcast(result, "app.smartqr.permission.INTERNAL")
         display?.release()
         display = null
         reader?.close()
