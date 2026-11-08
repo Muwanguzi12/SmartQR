@@ -25,6 +25,8 @@ import android.widget.Toast
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
 import java.io.File
+import java.io.ByteArrayOutputStream
+import java.nio.charset.Charset
 
 class FloatingDetectorService : Service() {
     private lateinit var windowManager: WindowManager
@@ -252,6 +254,26 @@ class FloatingDetectorService : Service() {
         return output.toString().trim()
     }
 
+    private fun decodeQuotedPrintable(value: String, charsetName: String): String {
+        val bytes = ByteArrayOutputStream()
+        var index = 0
+        while (index < value.length) {
+            if (value[index] == '=' && index + 2 < value.length) {
+                val byte = value.substring(index + 1, index + 3).toIntOrNull(16)
+                if (byte != null) {
+                    bytes.write(byte)
+                    index += 3
+                    continue
+                }
+            }
+            val charBytes = value[index].toString().toByteArray(Charsets.ISO_8859_1)
+            bytes.write(charBytes)
+            index++
+        }
+        val charset = try { Charset.forName(charsetName) } catch (_: Exception) { Charsets.ISO_8859_1 }
+        return String(bytes.toByteArray(), charset)
+    }
+
     private fun parseVCard(payload: String): ContactCard? {
         if (!payload.trimStart().startsWith("BEGIN:VCARD", ignoreCase = true)) return null
         val values = mutableMapOf<String, MutableList<String>>()
@@ -260,7 +282,15 @@ class FloatingDetectorService : Service() {
             val rawKey = pair.first.substringAfterLast('.')
             val key = rawKey.substringBefore(';').uppercase()
             if (key.isBlank() || key.startsWith("BEGIN") || key.startsWith("END") || key == "VERSION") continue
-            val decoded = unescapeVCard(pair.second)
+            val header = pair.first.uppercase()
+            val charsetName = Regex("CHARSET=([^;:]+)").find(header)?.groupValues?.get(1)?.trim('"')
+                ?: "ISO-8859-1"
+            val propertyValue = if (header.contains("ENCODING=QUOTED-PRINTABLE")) {
+                decodeQuotedPrintable(pair.second, charsetName)
+            } else {
+                pair.second
+            }
+            val decoded = unescapeVCard(propertyValue)
             if (decoded.isNotBlank()) values.getOrPut(key) { mutableListOf() }.add(decoded)
         }
         fun first(vararg keys: String): String = keys.firstNotNullOfOrNull { key ->
