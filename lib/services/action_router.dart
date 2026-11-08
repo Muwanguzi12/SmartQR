@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -120,7 +122,7 @@ class ActionRouter {
         escaped = false;
         continue;
       }
-      if (char == r'\') {
+      if (char == '\\') {
         escaped = true;
         continue;
       }
@@ -135,7 +137,7 @@ class ActionRouter {
         .replaceAll(RegExp(r'\\[nN]'), '\n')
         .replaceAll(r'\,', ',')
         .replaceAll(r'\;', ';')
-        .replaceAll(r'\\', r'\')
+        .replaceAll('\\\\', '\\')
         .trim();
   }
 
