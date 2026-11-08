@@ -46,7 +46,7 @@ class MainActivity : FlutterActivity() {
             registerReceiver(captureReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             @Suppress("DEPRECATION")
-            registerReceiver(captureReceiver, filter)
+            registerReceiver(captureReceiver, filter, "app.smartqr.permission.INTERNAL", null)
         }
         handleCapturedScreenIntent(intent)
     }
