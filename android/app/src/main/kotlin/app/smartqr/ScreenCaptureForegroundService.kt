@@ -87,8 +87,17 @@ class ScreenCaptureForegroundService : Service() {
         @Suppress("DEPRECATION")
         (getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager)
             .defaultDisplay.getRealMetrics(metrics)
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
+        // Remove abandoned temporary frames from earlier interrupted scans.
+        try {
+            cacheDir.listFiles()?.filter {
+                it.name.startsWith("smartqr-frame-") &&
+                    System.currentTimeMillis() - it.lastModified() > 24L * 60L * 60L * 1000L
+            }?.forEach { it.delete() }
+        } catch (_: Exception) {}
+        // Bound capture dimensions to limit peak memory use on high-resolution devices.
+        val scale = minOf(1f, 1920f / metrics.widthPixels, 1920f / metrics.heightPixels)
+        val width = (metrics.widthPixels * scale).toInt().coerceAtLeast(1)
+        val height = (metrics.heightPixels * scale).toInt().coerceAtLeast(1)
         reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         reader?.setOnImageAvailableListener({ source ->
             val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
