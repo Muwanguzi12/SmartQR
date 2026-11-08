@@ -114,7 +114,7 @@ class FloatingDetectorService : Service() {
                         true
                     }
                     MotionEvent.ACTION_UP -> {
-                        if (!moved) togglePanel()
+                        if (!moved) startScreenCaptureConsent()
                         true
                     }
                     else -> true
@@ -122,6 +122,20 @@ class FloatingDetectorService : Service() {
             }
         }
         windowManager.addView(bubble, params(58, 58))
+    }
+
+    /**
+     * A single tap on the floating QR bubble starts the Android consent flow.
+     * Android's system approval remains mandatory for each capture session.
+     */
+    private fun startScreenCaptureConsent() {
+        try {
+            val capture = Intent(this, ScreenCaptureConsentActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+            startActivity(capture)
+        } catch (_: Exception) {
+            showMessage("Could not start screen scanning. Please try again.")
+        }
     }
 
     private fun togglePanel() {
