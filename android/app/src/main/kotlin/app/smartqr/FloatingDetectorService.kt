@@ -14,12 +14,15 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.provider.ContactsContract
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.IBinder
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -35,6 +38,12 @@ class FloatingDetectorService : Service() {
     private var resultPanel: LinearLayout? = null
     private var expanded = false
     private var receiverRegistered = false
+    private var scanInProgress = false
+    private var scanStatusView: LinearLayout? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val scanTimeout = Runnable {
+        if (scanInProgress) showMessage("Screen scanning timed out. Please try again.")
+    }
 
     private val captureReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -129,13 +138,55 @@ class FloatingDetectorService : Service() {
      * Android's system approval remains mandatory for each capture session.
      */
     private fun startScreenCaptureConsent() {
+        // Ignore rapid repeat taps while Android consent, capture, or decoding is active.
+        if (scanInProgress) return
+        showScanProgress()
         try {
             val capture = Intent(this, ScreenCaptureConsentActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
             startActivity(capture)
         } catch (_: Exception) {
             showMessage("Could not start screen scanning. Please try again.")
         }
+    }
+
+    private fun showScanProgress() {
+        scanInProgress = true
+        mainHandler.removeCallbacks(scanTimeout)
+        mainHandler.postDelayed(scanTimeout, 45_000L)
+        bubble?.alpha = 0.55f
+        if (scanStatusView != null) return
+        val status = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(12, 8, 16, 8)
+            background = rounded(Color.WHITE, 28f)
+            elevation = 18f
+            addView(ProgressBar(this@FloatingDetectorService).apply {
+                isIndeterminate = true
+            }, LinearLayout.LayoutParams(24, 24))
+            addView(TextView(this@FloatingDetectorService).apply {
+                text = "  Scanning screen…"
+                textSize = 13f
+                setTextColor(Color.rgb(32, 28, 48))
+                typeface = Typeface.DEFAULT_BOLD
+            })
+        }
+        val statusParams = params(176, 48).apply { x = 84; y = 225 }
+        scanStatusView = status
+        try {
+            windowManager.addView(status, statusParams)
+        } catch (_: Exception) {
+            scanStatusView = null
+        }
+    }
+
+    private fun resetScanProgress() {
+        mainHandler.removeCallbacks(scanTimeout)
+        scanInProgress = false
+        bubble?.alpha = 1f
+        scanStatusView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+        scanStatusView = null
     }
 
     private fun togglePanel() {
@@ -161,9 +212,7 @@ class FloatingDetectorService : Service() {
         container.addView(Button(this).apply {
             text = "Scan this screen"
             setOnClickListener {
-                val capture = Intent(this@FloatingDetectorService, ScreenCaptureConsentActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
-                startActivity(capture)
+                startScreenCaptureConsent()
                 removePanel()
             }
         })
@@ -226,6 +275,7 @@ class FloatingDetectorService : Service() {
     }
 
     private fun showMessage(message: String) {
+        resetScanProgress()
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
@@ -344,6 +394,7 @@ class FloatingDetectorService : Service() {
     }
 
     private fun showResult(value: String) {
+        resetScanProgress()
         val contact = parseVCard(value)
         if (contact != null) {
             showContactResult(contact)
@@ -396,6 +447,7 @@ class FloatingDetectorService : Service() {
     }
 
     private fun showContactResult(contact: ContactCard) {
+        resetScanProgress()
         removePanel()
         resultPanel?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
         val card = LinearLayout(this).apply {
@@ -520,6 +572,9 @@ class FloatingDetectorService : Service() {
             try { unregisterReceiver(captureReceiver) } catch (_: Exception) {}
             receiverRegistered = false
         }
+        mainHandler.removeCallbacks(scanTimeout)
+        scanStatusView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+        scanStatusView = null
         bubble?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
         removePanel()
         resultPanel?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
