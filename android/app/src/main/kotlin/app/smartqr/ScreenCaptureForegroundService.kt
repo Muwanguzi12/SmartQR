@@ -36,6 +36,8 @@ class ScreenCaptureForegroundService : Service() {
     private var reader: ImageReader? = null
     private var display: VirtualDisplay? = null
     private var completed = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val captureTimeout = Runnable { finish(null) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -75,6 +77,7 @@ class ScreenCaptureForegroundService : Service() {
                     finish(null)
                 }
             }, Handler(Looper.getMainLooper()))
+            mainHandler.postDelayed(captureTimeout, 12_000L)
             captureOneFrame()
         } catch (_: Exception) {
             finish(null)
@@ -101,22 +104,30 @@ class ScreenCaptureForegroundService : Service() {
         reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         reader?.setOnImageAvailableListener({ source ->
             val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
+            var bitmap: Bitmap? = null
+            var cropped: Bitmap? = null
+            var outputFile: File? = null
             try {
                 val plane = image.planes[0]
                 val paddedWidth = plane.rowStride / plane.pixelStride
-                val bitmap = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
+                bitmap = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
                 bitmap.copyPixelsFromBuffer(plane.buffer)
-                val cropped = Bitmap.createBitmap(bitmap, 0, 0, width, height)
-                val file = File(cacheDir, "smartqr-frame-${System.currentTimeMillis()}.png")
-                FileOutputStream(file).use { cropped.compress(Bitmap.CompressFormat.PNG, 100, it) }
-                bitmap.recycle()
-                cropped.recycle()
-                image.close()
-                finish(file.absolutePath)
+                cropped = Bitmap.createBitmap(bitmap, 0, 0, width, height)
+                outputFile = File(cacheDir, "smartqr-frame-${System.currentTimeMillis()}.png")
+                FileOutputStream(outputFile).use { stream ->
+                    if (!cropped.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                        throw IllegalStateException("Could not encode the captured frame")
+                    }
+                }
             } catch (_: Exception) {
-                image.close()
-                finish(null)
+                try { outputFile?.delete() } catch (_: Exception) {}
+                outputFile = null
+            } finally {
+                try { bitmap?.recycle() } catch (_: Exception) {}
+                try { cropped?.recycle() } catch (_: Exception) {}
+                try { image.close() } catch (_: Exception) {}
             }
+            finish(outputFile?.absolutePath)
         }, Handler(Looper.getMainLooper()))
 
         display = projection?.createVirtualDisplay(
@@ -135,6 +146,7 @@ class ScreenCaptureForegroundService : Service() {
     private fun finish(path: String?) {
         if (completed) return
         completed = true
+        mainHandler.removeCallbacks(captureTimeout)
         val result = Intent(ACTION_CAPTURE_COMPLETE).setPackage(packageName)
             .putExtra(EXTRA_PATH, path)
         sendBroadcast(result, "app.smartqr.permission.INTERNAL")
@@ -156,6 +168,7 @@ class ScreenCaptureForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacks(captureTimeout)
         if (!completed) finish(null)
         super.onDestroy()
     }
