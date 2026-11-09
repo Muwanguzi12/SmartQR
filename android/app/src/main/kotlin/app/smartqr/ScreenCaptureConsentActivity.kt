@@ -36,6 +36,7 @@ class ScreenCaptureConsentActivity : Activity() {
         if (requestCode != this.requestCode) return
 
         if (resultCode != Activity.RESULT_OK || data == null) {
+            notifyCaptureFailed()
             finish()
             return
         }
@@ -48,10 +49,18 @@ class ScreenCaptureConsentActivity : Activity() {
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(serviceIntent)
             else startService(serviceIntent)
         } catch (_: Exception) {
+            notifyCaptureFailed()
             Toast.makeText(this, "Screen capture could not start. Please try again.", Toast.LENGTH_SHORT).show()
         } finally {
             // Reveal the app the user was using. Capture and recognition continue independently.
             finish()
         }
+    }
+
+    private fun notifyCaptureFailed() {
+        val result = Intent(ScreenCaptureForegroundService.ACTION_CAPTURE_COMPLETE)
+            .setPackage(packageName)
+            .putExtra(ScreenCaptureForegroundService.EXTRA_PATH, null as String?)
+        sendBroadcast(result, "app.smartqr.permission.INTERNAL")
     }
 }
