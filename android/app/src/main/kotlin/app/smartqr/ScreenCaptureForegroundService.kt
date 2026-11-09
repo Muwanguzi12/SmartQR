@@ -110,12 +110,15 @@ class ScreenCaptureForegroundService : Service() {
             try {
                 val plane = image.planes[0]
                 val paddedWidth = plane.rowStride / plane.pixelStride
-                bitmap = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
-                bitmap.copyPixelsFromBuffer(plane.buffer)
-                cropped = Bitmap.createBitmap(bitmap, 0, 0, width, height)
-                outputFile = File(cacheDir, "smartqr-frame-${System.currentTimeMillis()}.png")
-                FileOutputStream(outputFile).use { stream ->
-                    if (!cropped.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                val sourceBitmap = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
+                bitmap = sourceBitmap
+                sourceBitmap.copyPixelsFromBuffer(plane.buffer)
+                val croppedBitmap = Bitmap.createBitmap(sourceBitmap, 0, 0, width, height)
+                cropped = croppedBitmap
+                val frameFile = File(cacheDir, "smartqr-frame-${System.currentTimeMillis()}.png")
+                outputFile = frameFile
+                FileOutputStream(frameFile).use { stream ->
+                    if (!croppedBitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
                         throw IllegalStateException("Could not encode the captured frame")
                     }
                 }
